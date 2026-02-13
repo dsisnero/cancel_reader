@@ -30,6 +30,26 @@ module CancelReader
     end
   {% end %}
 
+  {% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
+    lib LibC
+      # kqueue constants
+      EVFILT_READ =  -1
+      EV_ADD      = 0x1
+
+      fun kqueue : Int32
+      fun kevent(kq : Int32, changelist : Kevent*, nchanges : Int32, eventlist : Kevent*, nevents : Int32, timeout : Void*) : Int32
+
+      struct Kevent
+        ident : UInt64
+        filter : Int16
+        flags : UInt16
+        fflags : UInt32
+        data : Int64
+        udata : Void*
+      end
+    end
+  {% end %}
+
   # cancelMixin represents a goroutine-safe cancellation status.
   class CancelMixin
     @canceled = false
@@ -219,6 +239,96 @@ module CancelReader
     end
   {% end %}
 
+  {% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
+    class KqueueCancelReader < Reader
+      def initialize(file : CancelReader::File)
+        @file = file
+        @mixin = CancelMixin.new
+        @kqueue = LibC.kqueue
+        if @kqueue == -1
+          raise IO::Error.new("Failed to create kqueue")
+        end
+
+        # create pipe for cancel signal
+        reader, writer = IO.pipe
+        @cancel_signal_reader = reader
+        @cancel_signal_writer = writer
+
+        # setup kevents array (2 events)
+        @kqueue_events = StaticArray(LibC::Kevent, 2).new { LibC::Kevent.new }
+
+        # set up kevent for file fd
+        set_kevent(@kqueue_events[0], file.fd.to_i32, LibC::EVFILT_READ, LibC::EV_ADD)
+        # set up kevent for pipe fd
+        set_kevent(@kqueue_events[1], @cancel_signal_reader.fd, LibC::EVFILT_READ, LibC::EV_ADD)
+      end
+
+      def read(slice : Bytes) : Int32
+        if @mixin.canceled?
+          raise ErrCanceled
+        end
+
+        wait_for_readable
+        @file.read(slice)
+      end
+
+      def cancel : Bool
+        @mixin.cancel
+        # send cancel signal
+        begin
+          @cancel_signal_writer.write(Bytes.new(1, 'c'.ord.to_u8))
+          true
+        rescue
+          false
+        end
+      end
+
+      def close : Nil
+        # close kqueue
+        LibC.close(@kqueue) if @kqueue != -1
+        @cancel_signal_reader.close
+        @cancel_signal_writer.close
+      end
+
+      private def set_kevent(kevent : LibC::Kevent*, fd : Int32, filter : Int16, flags : UInt16)
+        kevent.value.ident = fd.to_u64
+        kevent.value.filter = filter
+        kevent.value.flags = flags
+        kevent.value.fflags = 0_u32
+        kevent.value.data = 0_i64
+        kevent.value.udata = Pointer(Void).null
+      end
+
+      private def wait_for_readable
+        events = StaticArray(LibC::Kevent, 1).new { LibC::Kevent.new }
+        loop do
+          ret = LibC.kevent(@kqueue, @kqueue_events.to_unsafe, 2, events.to_unsafe, 1, nil)
+          if ret == -1
+            err = Errno.value
+            if err == Errno::EINTR
+              next
+            else
+              raise IO::Error.from_errno("kevent failed")
+            end
+          end
+          break
+        end
+
+        ident = events[0].ident
+        if ident == @file.fd.to_u64
+          return
+        elsif ident == @cancel_signal_reader.fd.to_u64
+          # read the signal byte
+          buf = Bytes.new(1)
+          @cancel_signal_reader.read(buf)
+          raise ErrCanceled
+        else
+          raise IO::Error.new("Unknown fd in kevent")
+        end
+      end
+    end
+  {% end %}
+
   # NewReader returns a reader with a cancel function.
   def self.new_reader(reader : IO) : Reader
     # Try to get a CancelReader::File representation
@@ -231,6 +341,9 @@ module CancelReader
     if file
       {% if flag?(:linux) %}
         return EpollCancelReader.new(file)
+      {% end %}
+      {% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
+        return KqueueCancelReader.new(file)
       {% end %}
     end
 

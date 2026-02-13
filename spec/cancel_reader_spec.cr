@@ -93,3 +93,38 @@ end
     end
   end
 {% end %}
+
+{% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
+  describe "BSD kqueue reader", tags: "bsd" do
+    it "cancels a file read" do
+      # create temp file with data
+      path = nil
+      File.tempfile("cancel_test") do |f|
+        f.print "hello"
+        path = f.path
+      end
+      file = File.open(path, "r")
+      reader = CancelReader.new_reader(file)
+      spawn do
+        reader.cancel
+      end
+      expect_raises(CancelReader::CanceledError) do
+        slice = Bytes.new(5)
+        reader.read(slice)
+      end
+      file.close
+    end
+
+    it "cancel returns true when successful" do
+      path = nil
+      File.tempfile("cancel_test") do |f|
+        f.print "test"
+        path = f.path
+      end
+      file = File.open(path, "r")
+      reader = CancelReader.new_reader(file)
+      reader.cancel.should be_true
+      file.close
+    end
+  end
+{% end %}
