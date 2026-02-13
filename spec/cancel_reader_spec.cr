@@ -58,3 +58,38 @@ describe CancelReader::CancelMixin do
     mixin.canceled?.should be_true
   end
 end
+
+{% if flag?(:linux) %}
+  describe "Linux epoll reader", tags: "linux" do
+    it "cancels a file read" do
+      # create temp file with data
+      path = nil
+      File.tempfile("cancel_test") do |f|
+        f.print "hello"
+        path = f.path
+      end
+      file = File.open(path, "r")
+      reader = CancelReader.new_reader(file)
+      spawn do
+        reader.cancel
+      end
+      expect_raises(CancelReader::CanceledError) do
+        slice = Bytes.new(5)
+        reader.read(slice)
+      end
+      file.close
+    end
+
+    it "cancel returns true when successful" do
+      path = nil
+      File.tempfile("cancel_test") do |f|
+        f.print "test"
+        path = f.path
+      end
+      file = File.open(path, "r")
+      reader = CancelReader.new_reader(file)
+      reader.cancel.should be_true
+      file.close
+    end
+  end
+{% end %}
