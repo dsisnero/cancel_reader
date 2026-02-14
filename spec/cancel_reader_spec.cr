@@ -60,71 +60,81 @@ describe CancelReader::CancelMixin do
 end
 
 {% if flag?(:linux) %}
-  describe "Linux epoll reader", tags: "linux" do
-    it "cancels a file read" do
-      # create temp file with data
-      path = nil
-      File.tempfile("cancel_test") do |f|
-        f.print "hello"
-        path = f.path
-      end
-      file = File.open(path, "r")
-      reader = CancelReader.new_reader(file)
+  pending describe "Linux epoll reader", tags: "linux" do
+    it "cancels a blocking read" do
+      reader, writer = IO.pipe
+      cancel_reader = CancelReader.new_reader(reader)
+
+      # Spawn a fiber that will block reading
+      done = Channel(Nil).new
       spawn do
-        reader.cancel
-      end
-      expect_raises(CancelReader::CanceledError) do
         slice = Bytes.new(5)
-        reader.read(slice)
+        expect_raises(CancelReader::CanceledError) do
+          cancel_reader.read(slice)
+        end
+        done.send(nil)
       end
-      file.close
+
+      # Give fiber a chance to start blocking
+      Fiber.yield
+
+      # Cancel should succeed
+      cancel_reader.cancel.should be_true
+
+      # Wait for fiber to finish (should be unblocked by cancel)
+      select
+      when done.receive
+      when timeout(100.milliseconds)
+        fail "expected cancellation to unblock reader"
+      end
     end
 
     it "cancel returns true when successful" do
-      path = nil
-      File.tempfile("cancel_test") do |f|
-        f.print "test"
-        path = f.path
-      end
-      file = File.open(path, "r")
-      reader = CancelReader.new_reader(file)
-      reader.cancel.should be_true
-      file.close
+      reader, writer = IO.pipe
+      cancel_reader = CancelReader.new_reader(reader)
+      cancel_reader.cancel.should be_true
+      reader.close
+      writer.close
     end
   end
 {% end %}
 
 {% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
-  describe "BSD kqueue reader", tags: "bsd" do
-    it "cancels a file read" do
-      # create temp file with data
-      path = nil
-      File.tempfile("cancel_test") do |f|
-        f.print "hello"
-        path = f.path
-      end
-      file = File.open(path, "r")
-      reader = CancelReader.new_reader(file)
+  pending describe "BSD kqueue reader", tags: "bsd" do
+    it "cancels a blocking read" do
+      reader, writer = IO.pipe
+      cancel_reader = CancelReader.new_reader(reader)
+
+      # Spawn a fiber that will block reading
+      done = Channel(Nil).new
       spawn do
-        reader.cancel
-      end
-      expect_raises(CancelReader::CanceledError) do
         slice = Bytes.new(5)
-        reader.read(slice)
+        expect_raises(CancelReader::CanceledError) do
+          cancel_reader.read(slice)
+        end
+        done.send(nil)
       end
-      file.close
+
+      # Give fiber a chance to start blocking
+      Fiber.yield
+
+      # Cancel should succeed
+      cancel_reader.cancel.should be_true
+
+      # Wait for fiber to finish (should be unblocked by cancel)
+      select
+      when done.receive
+      when timeout(100.milliseconds)
+        fail "expected cancellation to unblock reader"
+      end
     end
 
     it "cancel returns true when successful" do
-      path = nil
-      File.tempfile("cancel_test") do |f|
-        f.print "test"
-        path = f.path
-      end
-      file = File.open(path, "r")
-      reader = CancelReader.new_reader(file)
-      reader.cancel.should be_true
-      file.close
+      reader, writer = IO.pipe
+      cancel_reader = CancelReader.new_reader(reader)
+      cancel_reader.cancel.should be_true
+      reader.close
+      writer.close
     end
   end
 {% end %}

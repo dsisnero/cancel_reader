@@ -2,6 +2,8 @@
 module CancelReader
   VERSION = "0.1.0"
 
+  # DEBUG = ENV["CANCEL_READER_DEBUG"]?
+
   # Error returned when trying to read from a canceled reader.
   class CanceledError < Exception
     def initialize
@@ -12,43 +14,22 @@ module CancelReader
   ErrCanceled = CanceledError.new
 
   {% if flag?(:linux) %}
+    # Use global ::LibC epoll bindings
+  {% end %}
+
+  {% if flag?(:unix) %}
     lib LibC
-      # epoll constants
-      EPOLLIN       = 0x001_u32
-      EPOLL_CTL_ADD =         1
-      EPOLL_CTL_DEL =         2
-      EPOLL_CTL_MOD =         3
-
-      fun epoll_create1(flags : Int32) : Int32
-      fun epoll_ctl(epfd : Int32, op : Int32, fd : Int32, event : EpollEvent*) : Int32
-      fun epoll_wait(epfd : Int32, events : EpollEvent*, maxevents : Int32, timeout : Int32) : Int32
-
-      struct EpollEvent
-        events : UInt32
-        data : UInt64
+      struct FdSet
+        fds_bits : StaticArray(Int32, 32)
       end
+
+      fun select(nfds : Int32, readfds : FdSet*, writefds : FdSet*, errorfds : FdSet*, timeout : ::LibC::Timeval*) : Int32
     end
   {% end %}
 
-  {% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
-    lib LibC
-      # kqueue constants
-      EVFILT_READ =  -1
-      EV_ADD      = 0x1
-
-      fun kqueue : Int32
-      fun kevent(kq : Int32, changelist : Kevent*, nchanges : Int32, eventlist : Kevent*, nevents : Int32, timeout : Void*) : Int32
-
-      struct Kevent
-        ident : UInt64
-        filter : Int16
-        flags : UInt16
-        fflags : UInt32
-        data : Int64
-        udata : Void*
-      end
-    end
-  {% end %}
+  # Maximum file descriptor number for select (POSIX limitation).
+  # File descriptors >= FD_SETSIZE cannot be used with select.
+  FD_SETSIZE = 1024
 
   # cancelMixin represents a goroutine-safe cancellation status.
   class CancelMixin
@@ -82,7 +63,12 @@ module CancelReader
     end
 
     def name : String
-      @io.path.to_s
+      io = @io
+      if io.is_a?(File)
+        io.path.to_s
+      else
+        ""
+      end
     end
 
     def read(slice : Bytes) : Int32
@@ -154,7 +140,7 @@ module CancelReader
       def initialize(file : CancelReader::File)
         @file = file
         @mixin = CancelMixin.new
-        @epoll = LibC.epoll_create1(0)
+        @epoll = ::LibC.epoll_create1(0)
         if @epoll == -1
           raise IO::Error.new("Failed to create epoll")
         end
@@ -165,20 +151,20 @@ module CancelReader
         @cancel_signal_writer = writer
 
         # add file fd to epoll
-        ev = LibC::EpollEvent.new
-        ev.events = LibC::EPOLLIN
-        ev.data = file.fd.to_u64
-        if LibC.epoll_ctl(@epoll, LibC::EPOLL_CTL_ADD, file.fd.to_i32, pointerof(ev)) == -1
-          LibC.close(@epoll)
+        ev = ::LibC::EpollEvent.new
+        ev.events = ::LibC::EPOLLIN
+        ev.data.u64 = file.fd.to_u64
+        if ::LibC.epoll_ctl(@epoll, ::LibC::EPOLL_CTL_ADD, file.fd.to_i32, pointerof(ev)) == -1
+          ::LibC.close(@epoll)
           raise IO::Error.new("Failed to add file to epoll")
         end
 
         # add pipe read fd to epoll
-        ev2 = LibC::EpollEvent.new
-        ev2.events = LibC::EPOLLIN
-        ev2.data = @cancel_signal_reader.fd.to_u64
-        if LibC.epoll_ctl(@epoll, LibC::EPOLL_CTL_ADD, @cancel_signal_reader.fd, pointerof(ev2)) == -1
-          LibC.close(@epoll)
+        ev2 = ::LibC::EpollEvent.new
+        ev2.events = ::LibC::EPOLLIN
+        ev2.data.u64 = @cancel_signal_reader.fd.to_u64
+        if ::LibC.epoll_ctl(@epoll, ::LibC::EPOLL_CTL_ADD, @cancel_signal_reader.fd, pointerof(ev2)) == -1
+          ::LibC.close(@epoll)
           raise IO::Error.new("Failed to add pipe to epoll")
         end
       end
@@ -196,44 +182,50 @@ module CancelReader
         @mixin.cancel
         # send cancel signal
         begin
+          puts "DEBUG: cancel writing to fd #{@cancel_signal_writer.fd}" if ENV["CANCEL_READER_DEBUG"]?
           @cancel_signal_writer.write(Bytes.new(1, 'c'.ord.to_u8))
+          puts "DEBUG: cancel write succeeded" if ENV["CANCEL_READER_DEBUG"]?
           true
         rescue
+          puts "DEBUG: cancel write failed" if ENV["CANCEL_READER_DEBUG"]?
           false
         end
       end
 
       def close : Nil
         # close epoll
-        LibC.close(@epoll) if @epoll != -1
+        ::LibC.close(@epoll) if @epoll != -1
         @cancel_signal_reader.close
         @cancel_signal_writer.close
       end
 
       private def wait_for_readable
-        event = LibC::EpollEvent.new
+        event = ::LibC::EpollEvent.new
         loop do
-          ret = LibC.epoll_wait(@epoll, pointerof(event), 1, -1)
+          if @mixin.canceled?
+            raise ErrCanceled
+          end
+
+          ret = ::LibC.epoll_wait(@epoll, pointerof(event), 1, -1)
           if ret == -1
             err = Errno.value
             if err == Errno::EINTR
+              Fiber.yield
               next
             else
               raise IO::Error.from_errno("epoll_wait failed")
             end
           end
-          break
-        end
 
-        if event.data == @file.fd.to_u64
-          return
-        elsif event.data == @cancel_signal_reader.fd.to_u64
-          # read the signal byte
-          buf = Bytes.new(1)
-          @cancel_signal_reader.read(buf)
-          raise ErrCanceled
-        else
-          raise IO::Error.new("Unknown fd in epoll event")
+          if event.data.u64 == @file.fd.to_u64
+            return
+          elsif event.data.u64 == @cancel_signal_reader.fd.to_u64
+            buf = Bytes.new(1)
+            @cancel_signal_reader.read(buf)
+            raise ErrCanceled
+          else
+            raise IO::Error.new("Unknown fd in epoll event")
+          end
         end
       end
     end
@@ -241,10 +233,18 @@ module CancelReader
 
   {% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
     class KqueueCancelReader < Reader
+      @file : CancelReader::File
+      @mixin : CancelMixin
+      @kqueue : Int32
+      @cancel_signal_reader : IO::FileDescriptor
+      @cancel_signal_writer : IO::FileDescriptor
+      @kqueue_events : StaticArray(::LibC::Kevent, 2)
+
       def initialize(file : CancelReader::File)
         @file = file
         @mixin = CancelMixin.new
-        @kqueue = LibC.kqueue
+        @kqueue = ::LibC.kqueue
+        puts "DEBUG: kqueue fd = #{@kqueue}" if ENV["CANCEL_READER_DEBUG"]?
         if @kqueue == -1
           raise IO::Error.new("Failed to create kqueue")
         end
@@ -255,12 +255,12 @@ module CancelReader
         @cancel_signal_writer = writer
 
         # setup kevents array (2 events)
-        @kqueue_events = StaticArray(LibC::Kevent, 2).new { LibC::Kevent.new }
+        @kqueue_events = StaticArray(::LibC::Kevent, 2).new { ::LibC::Kevent.new }
 
         # set up kevent for file fd
-        set_kevent(@kqueue_events[0], file.fd.to_i32, LibC::EVFILT_READ, LibC::EV_ADD)
+        set_kevent(@kqueue_events.to_unsafe, file.fd.to_i32, ::LibC::EVFILT_READ, ::LibC::EV_ADD)
         # set up kevent for pipe fd
-        set_kevent(@kqueue_events[1], @cancel_signal_reader.fd, LibC::EVFILT_READ, LibC::EV_ADD)
+        set_kevent(@kqueue_events.to_unsafe + 1, @cancel_signal_reader.fd, ::LibC::EVFILT_READ, ::LibC::EV_ADD)
       end
 
       def read(slice : Bytes) : Int32
@@ -276,55 +276,180 @@ module CancelReader
         @mixin.cancel
         # send cancel signal
         begin
+          puts "DEBUG: cancel writing to fd #{@cancel_signal_writer.fd}" if ENV["CANCEL_READER_DEBUG"]?
           @cancel_signal_writer.write(Bytes.new(1, 'c'.ord.to_u8))
+          puts "DEBUG: cancel write succeeded" if ENV["CANCEL_READER_DEBUG"]?
           true
         rescue
+          puts "DEBUG: cancel write failed" if ENV["CANCEL_READER_DEBUG"]?
           false
         end
       end
 
       def close : Nil
         # close kqueue
-        LibC.close(@kqueue) if @kqueue != -1
+        ::LibC.close(@kqueue) if @kqueue != -1
         @cancel_signal_reader.close
         @cancel_signal_writer.close
       end
 
-      private def set_kevent(kevent : LibC::Kevent*, fd : Int32, filter : Int16, flags : UInt16)
+      private def set_kevent(kevent : ::LibC::Kevent*, fd : Int32, filter : Int16, flags : UInt16)
         kevent.value.ident = fd.to_u64
         kevent.value.filter = filter
         kevent.value.flags = flags
         kevent.value.fflags = 0_u32
         kevent.value.data = 0_i64
         kevent.value.udata = Pointer(Void).null
+        puts "DEBUG: set_kevent fd=#{fd}, filter=#{filter}, flags=#{flags}" if ENV["CANCEL_READER_DEBUG"]?
       end
 
       private def wait_for_readable
-        events = StaticArray(LibC::Kevent, 1).new { LibC::Kevent.new }
+        events = StaticArray(::LibC::Kevent, 1).new { ::LibC::Kevent.new }
+        if ENV["CANCEL_READER_DEBUG"]?
+          @kqueue_events.each_with_index do |ev, i|
+            puts "DEBUG: changelist[#{i}] ident=#{ev.ident}, filter=#{ev.filter}, flags=#{ev.flags}"
+          end
+        end
+
         loop do
-          ret = LibC.kevent(@kqueue, @kqueue_events.to_unsafe, 2, events.to_unsafe, 1, nil)
+          if @mixin.canceled?
+            raise ErrCanceled
+          end
+
+          timeout = ::LibC::Timespec.new
+          timeout.tv_sec = 0
+          timeout.tv_nsec = 10_000_000
+
+          puts "DEBUG: calling kevent with kqueue #{@kqueue}, changelist size 2, timeout 10ms" if ENV["CANCEL_READER_DEBUG"]?
+          ret = ::LibC.kevent(@kqueue, @kqueue_events.to_unsafe, 2, events.to_unsafe, 1, pointerof(timeout))
+          puts "DEBUG: kevent returned #{ret}" if ENV["CANCEL_READER_DEBUG"]?
           if ret == -1
             err = Errno.value
+            puts "DEBUG: kevent error #{err}" if ENV["CANCEL_READER_DEBUG"]?
             if err == Errno::EINTR
+              Fiber.yield
               next
             else
               raise IO::Error.from_errno("kevent failed")
             end
+          elsif ret == 0
+            Fiber.yield
+            next
           end
-          break
+
+          ident = events[0].ident
+          puts "DEBUG: kevent ident #{ident}, file fd #{@file.fd.to_u64}, pipe fd #{@cancel_signal_reader.fd.to_u64}" if ENV["CANCEL_READER_DEBUG"]?
+          if ident == @file.fd.to_u64
+            return
+          elsif ident == @cancel_signal_reader.fd.to_u64
+            buf = Bytes.new(1)
+            @cancel_signal_reader.read(buf)
+            raise ErrCanceled
+          else
+            raise IO::Error.new("Unknown fd in kevent")
+          end
+        end
+      end
+    end
+  {% end %}
+
+  {% if flag?(:unix) %}
+    # selectCancelReader implements CancelReader using POSIX select syscall.
+    class SelectCancelReader < Reader
+      @file : CancelReader::File
+      @mixin : CancelMixin
+      @cancel_signal_reader : IO::FileDescriptor
+      @cancel_signal_writer : IO::FileDescriptor
+
+      def initialize(file : CancelReader::File)
+        @file = file
+        @mixin = CancelMixin.new
+
+        # create pipe for cancel signal
+        reader, writer = IO.pipe
+        @cancel_signal_reader = reader
+        @cancel_signal_writer = writer
+      end
+
+      def read(slice : Bytes) : Int32
+        if @mixin.canceled?
+          raise ErrCanceled
         end
 
-        ident = events[0].ident
-        if ident == @file.fd.to_u64
-          return
-        elsif ident == @cancel_signal_reader.fd.to_u64
-          # read the signal byte
-          buf = Bytes.new(1)
-          @cancel_signal_reader.read(buf)
-          raise ErrCanceled
-        else
-          raise IO::Error.new("Unknown fd in kevent")
+        wait_for_readable
+        @file.read(slice)
+      end
+
+      def cancel : Bool
+        @mixin.cancel
+        # send cancel signal
+        begin
+          puts "DEBUG: cancel writing to fd #{@cancel_signal_writer.fd}" if ENV["CANCEL_READER_DEBUG"]?
+          @cancel_signal_writer.write(Bytes.new(1, 'c'.ord.to_u8))
+          puts "DEBUG: cancel write succeeded" if ENV["CANCEL_READER_DEBUG"]?
+          true
+        rescue
+          puts "DEBUG: cancel write failed" if ENV["CANCEL_READER_DEBUG"]?
+          false
         end
+      end
+
+      def close : Nil
+        @cancel_signal_reader.close
+        @cancel_signal_writer.close
+      end
+
+      private def wait_for_readable
+        reader_fd = @file.fd.to_i32
+        abort_fd = @cancel_signal_reader.fd
+        max_fd = reader_fd > abort_fd ? reader_fd : abort_fd
+        if max_fd >= FD_SETSIZE
+          raise IO::Error.new("cannot select on file descriptor #{max_fd} which is larger than 1024")
+        end
+
+        loop do
+          if @mixin.canceled?
+            raise ErrCanceled
+          end
+
+          fd_set = LibC::FdSet.new
+          fd_set.fds_bits = StaticArray(Int32, 32).new(0)
+          set_fd(fd_set, reader_fd)
+          set_fd(fd_set, abort_fd)
+
+          ret = LibC.select(max_fd + 1, pointerof(fd_set), nil, nil, Pointer(::LibC::Timeval).null)
+          if ret == -1
+            err = Errno.value
+            if err == Errno::EINTR
+              Fiber.yield
+              next
+            else
+              raise IO::Error.from_errno("select failed")
+            end
+          end
+
+          if is_set(fd_set, abort_fd)
+            buf = Bytes.new(1)
+            @cancel_signal_reader.read(buf)
+            raise ErrCanceled
+          elsif is_set(fd_set, reader_fd)
+            return
+          else
+            raise IO::Error.new("select returned without setting a file descriptor")
+          end
+        end
+      end
+
+      private def set_fd(fd_set : LibC::FdSet, fd : Int32)
+        idx = fd // 32
+        bit = fd % 32
+        fd_set.fds_bits[idx] |= 1 << bit
+      end
+
+      private def is_set(fd_set : LibC::FdSet, fd : Int32) : Bool
+        idx = fd // 32
+        bit = fd % 32
+        (fd_set.fds_bits[idx] & (1 << bit)) != 0
       end
     end
   {% end %}
@@ -339,11 +464,33 @@ module CancelReader
            end
 
     if file
+      # Check FD_SETSIZE limit for select-based implementations
+      if file.fd >= FD_SETSIZE
+        # File descriptor too large for select, use fallback
+        return FallbackReader.new(reader)
+      end
+
+      {% if flag?(:windows) %}
+        # Windows only supports stdin (fd 0) via CONIN$; fallback for now
+        return FallbackReader.new(reader)
+      {% end %}
+
       {% if flag?(:linux) %}
         return EpollCancelReader.new(file)
       {% end %}
+
       {% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
-        return KqueueCancelReader.new(file)
+        # BSD platforms: use kqueue except for /dev/tty (which doesn't work with kqueue)
+        if file.name == "/dev/tty"
+          return SelectCancelReader.new(file)
+        else
+          return KqueueCancelReader.new(file)
+        end
+      {% end %}
+
+      {% if flag?(:unix) %}
+        # Other Unix-like systems (e.g., Solaris) use select
+        return SelectCancelReader.new(file)
       {% end %}
     end
 
