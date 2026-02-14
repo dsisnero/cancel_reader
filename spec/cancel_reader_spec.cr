@@ -125,7 +125,6 @@ end
 {% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
   describe "BSD kqueue reader", tags: "bsd" do
     it "cancels a blocking read" do
-      pending
       reader, writer = IO.pipe
       cancel_reader = CancelReader.new_reader(reader)
 
@@ -154,7 +153,6 @@ end
     end
 
     it "cancel returns true when successful" do
-      pending
       reader, writer = IO.pipe
       cancel_reader = CancelReader.new_reader(reader)
       cancel_reader.cancel.should be_true
@@ -163,7 +161,6 @@ end
     end
 
     it "cancels a read with data available" do
-      pending
       reader, writer = IO.pipe
       cancel_reader = CancelReader.new_reader(reader)
 
@@ -173,8 +170,8 @@ end
       writer.flush
 
       # Variables to capture read result
-      read_bytes = Channel(Int32).new
-      read_error = Channel(Exception?).new
+      read_bytes = Channel(Int32).new(1)
+      read_error = Channel(Exception?).new(1)
 
       # Spawn a fiber that will read
       done = Channel(Nil).new

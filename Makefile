@@ -9,12 +9,17 @@ update:
 format:
 	crystal tool format --check
 
+EXE_SUFFIX =
+ifeq ($(OS),Windows_NT)
+EXE_SUFFIX = .exe
+endif
+AMEBAR = ./bin/ameba$(EXE_SUFFIX)
 lint:
-	ameba --fix
-	ameba
+	$(AMEBAR) --fix
+	$(AMEBAR) --format progress
 
 test:
-	crystal spec --tag '~bsd'
+	crystal spec
 
 clean:
 	rm -rf ./temp/*

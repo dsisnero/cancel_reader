@@ -1,3 +1,9 @@
 
 # Use bd merge for beads JSONL files
 .beads/issues.jsonl merge=beads
+
+# Force LF line endings for Crystal source files
+*.cr text eol=lf
+*.yml text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
