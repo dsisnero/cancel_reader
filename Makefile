@@ -15,8 +15,8 @@ EXE_SUFFIX = .exe
 endif
 AMEBAR = ./bin/ameba$(EXE_SUFFIX)
 lint:
-	$(AMEBAR) --fix
-	$(AMEBAR) --format progress
+	$(AMEBAR) --fix src spec
+	$(AMEBAR) --format progress src spec
 
 test:
 	crystal spec

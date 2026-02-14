@@ -171,12 +171,12 @@ module CancelReader
           if ::LibC.epoll_ctl(@epoll, ::LibC::EPOLL_CTL_ADD, @cancel_signal_reader.fd, pointerof(ev2)) == -1
             raise IO::Error.new("Failed to add pipe to epoll")
           end
-        rescue
+        rescue ex
           # cleanup on error
           ::LibC.close(@epoll) if @epoll != -1
           @cancel_signal_reader.close
           @cancel_signal_writer.close
-          raise
+          raise ex
         end
       end
 
