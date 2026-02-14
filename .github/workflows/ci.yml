@@ -16,8 +16,6 @@ jobs:
 
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
-        with:
-          channel: stable
 
       - name: Cache shards
         uses: actions/cache@v4
@@ -47,8 +45,6 @@ jobs:
 
       - name: Install Crystal
         uses: crystal-lang/install-crystal@v1
-        with:
-          channel: stable
 
       - name: Cache shards
         uses: actions/cache@v4
