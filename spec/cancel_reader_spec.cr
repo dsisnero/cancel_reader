@@ -285,7 +285,7 @@ end
 
       # Cancel before yielding to fiber (so cancellation flag is set)
       cancel_reader.cancel.should be_true
-      
+
       # Ensure cancellation signal is processed
       Fiber.yield
 
