@@ -217,7 +217,7 @@ module CancelReader
             raise ErrCanceled
           end
 
-          ret = ::LibC.epoll_wait(@epoll, pointerof(event), 1, 100)  # 100ms timeout
+          ret = ::LibC.epoll_wait(@epoll, pointerof(event), 1, 100) # 100ms timeout
           if ret == -1
             err = Errno.value
             if err == Errno::EINTR
@@ -435,8 +435,8 @@ module CancelReader
 
           timeout = ::LibC::Timeval.new
           timeout.tv_sec = 0
-          timeout.tv_usec = 100_000  # 100ms
-          
+          timeout.tv_usec = 100_000 # 100ms
+
           ret = LibC.select(max_fd + 1, pointerof(fd_set), nil, nil, pointerof(timeout))
           if ret == -1
             err = Errno.value
