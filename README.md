@@ -1,10 +1,17 @@
 # cancel_reader
 
+[![CI](https://github.com/dsisnero/cancel_reader/actions/workflows/ci.yml/badge.svg)](https://github.com/dsisnero/cancel_reader/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/github/v/release/dsisnero/cancel_reader)](https://github.com/dsisnero/cancel_reader/releases)
+[![License](https://img.shields.io/github/license/dsisnero/cancel_reader)](LICENSE)
+[![Crystal](https://img.shields.io/badge/crystal-%3E%3D1.19.1-blue)](https://crystal-lang.org)
+
 A Crystal port of [muesli/cancelreader](https://github.com/muesli/cancelreader) Go library.
 
 This library provides a cancelable reader that allows interrupting read operations.
 
 **Source:** The original Go source is included as a git submodule in `vendor/` (commit [`245609e`](https://github.com/muesli/cancelreader/commit/245609eb8557cff32c56eed62b04a2d096c83e83)).
+
+**Status:** Complete port with all functionality from the Go library. All tests pass on Linux, macOS, and Windows (except BSD kqueue tests which are pending due to timing issues). The library is ready for production use.
 
 ## Installation
 
@@ -61,19 +68,25 @@ This project uses standard Crystal development tools:
 - `make lint` – Run ameba linter (auto‑fix + check)
 - `make test` – Run Crystal specs
 - `make clean` – Remove temporary files
+- See `examples/` directory for usage examples
 
 Always run `make lint` and `make test` before committing.
 
 ## Contributing
 
-This is a port; changes should match the behavior of the original Go library.
+This is a port; changes must match the behavior of the original Go library.
 If you find a discrepancy, please open an issue.
 
-1. Fork it (<https://github.com/dsisnero/cancel_reader/fork>)
-2. Create your feature branch (`git checkout -b my-new-feature`)
-3. Commit your changes (`git commit -am 'Add some feature'`)
-4. Push to the branch (`git push origin my-new-feature`)
-5. Create a new Pull Request
+Detailed contribution guidelines are in [CONTRIBUTING.md](CONTRIBUTING.md). Please read them before submitting changes.
+
+The quick workflow:
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/your-change`)
+3. Make your changes, ensuring they match Go behavior
+4. Run `make lint` and `make test`
+5. Commit with a descriptive message
+6. Push and open a Pull Request
 
 ## Contributors
 

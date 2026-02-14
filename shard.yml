@@ -1,12 +1,23 @@
 name: cancel_reader
 version: 0.1.0
 
+description: |
+  A Crystal port of muesli/cancelreader - a cancelable reader that allows interrupting read operations
+  without consuming data. Supports Linux (epoll), BSD (kqueue), Unix (select), and Windows (fallback).
+
 authors:
   - Dominic Sisneros <dsisnero@gmail.com>
 
 crystal: '>= 1.19.1'
 
 license: MIT
+
+repository: https://github.com/dsisnero/cancel_reader
+documentation: https://dsisnero.github.io/cancel_reader/
+
+targets:
+  cancel_reader:
+    main: src/cancel_reader.cr
 
 development_dependencies:
   ameba:
