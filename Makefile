@@ -7,7 +7,7 @@ update:
 	BEADS_DIR=$$(pwd)/.beads shards update
 
 format:
-	crystal tool format --check
+	crystal tool format --check src spec
 
 EXE_SUFFIX =
 ifeq ($(OS),Windows_NT)

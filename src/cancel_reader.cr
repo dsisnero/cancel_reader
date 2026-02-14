@@ -136,6 +136,12 @@ module CancelReader
   {% if flag?(:linux) %}
     # epollCancelReader implements CancelReader using Linux epoll mechanism.
     class EpollCancelReader < Reader
+      @file : CancelReader::File
+      @mixin : CancelMixin
+      @epoll : Int32
+      @cancel_signal_reader : IO::FileDescriptor
+      @cancel_signal_writer : IO::FileDescriptor
+
       def initialize(file : CancelReader::File)
         @file = file
         @mixin = CancelMixin.new
