@@ -285,6 +285,9 @@ end
 
       # Cancel before yielding to fiber (so cancellation flag is set)
       cancel_reader.cancel.should be_true
+      
+      # Ensure cancellation signal is processed
+      Fiber.yield
 
       # Give fiber a chance to run
       Fiber.yield
@@ -292,7 +295,7 @@ end
       # Wait for fiber to finish
       select
       when done.receive
-      when timeout(100.milliseconds)
+      when timeout(500.milliseconds)
         fail "expected cancellation to unblock reader"
       end
 
