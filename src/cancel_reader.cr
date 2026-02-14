@@ -217,7 +217,7 @@ module CancelReader
             raise ErrCanceled
           end
 
-          ret = ::LibC.epoll_wait(@epoll, pointerof(event), 1, -1)
+          ret = ::LibC.epoll_wait(@epoll, pointerof(event), 1, 100)  # 100ms timeout
           if ret == -1
             err = Errno.value
             if err == Errno::EINTR
@@ -226,6 +226,10 @@ module CancelReader
             else
               raise IO::Error.from_errno("epoll_wait failed")
             end
+          elsif ret == 0
+            # timeout
+            Fiber.yield
+            next
           end
 
           if event.data.u64 == @file.fd.to_u64
@@ -429,7 +433,11 @@ module CancelReader
           set_fd(fd_set, reader_fd)
           set_fd(fd_set, abort_fd)
 
-          ret = LibC.select(max_fd + 1, pointerof(fd_set), nil, nil, Pointer(::LibC::Timeval).null)
+          timeout = ::LibC::Timeval.new
+          timeout.tv_sec = 0
+          timeout.tv_usec = 100_000  # 100ms
+          
+          ret = LibC.select(max_fd + 1, pointerof(fd_set), nil, nil, pointerof(timeout))
           if ret == -1
             err = Errno.value
             if err == Errno::EINTR
@@ -438,6 +446,10 @@ module CancelReader
             else
               raise IO::Error.from_errno("select failed")
             end
+          elsif ret == 0
+            # timeout
+            Fiber.yield
+            next
           end
 
           if is_set(fd_set, abort_fd)
