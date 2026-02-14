@@ -466,12 +466,10 @@ module CancelReader
     if file
       # Check FD_SETSIZE limit for select-based implementations
       if file.fd >= FD_SETSIZE
-        # File descriptor too large for select, use fallback
         return FallbackReader.new(reader)
       end
 
       {% if flag?(:windows) %}
-        # Windows only supports stdin (fd 0) via CONIN$; fallback for now
         return FallbackReader.new(reader)
       {% end %}
 
@@ -480,7 +478,6 @@ module CancelReader
       {% end %}
 
       {% if flag?(:darwin) || flag?(:freebsd) || flag?(:openbsd) || flag?(:netbsd) || flag?(:dragonfly) %}
-        # BSD platforms: use kqueue except for /dev/tty (which doesn't work with kqueue)
         if file.name == "/dev/tty"
           return SelectCancelReader.new(file)
         else
@@ -489,7 +486,6 @@ module CancelReader
       {% end %}
 
       {% if flag?(:unix) %}
-        # Other Unix-like systems (e.g., Solaris) use select
         return SelectCancelReader.new(file)
       {% end %}
     end

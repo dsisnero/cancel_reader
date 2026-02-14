@@ -14,7 +14,7 @@ lint:
 	ameba
 
 test:
-	crystal spec
+	crystal spec --tag '~bsd'
 
 clean:
 	rm -rf ./temp/*

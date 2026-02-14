@@ -24,14 +24,30 @@ This library provides a cancelable reader that allows interrupting read operatio
 require "cancel_reader"
 
 # Create a cancelable reader from any IO
-reader = CancelReader.new(some_io)
+reader = CancelReader.new_reader(some_io)
 
-# Read from the reader
-data = reader.read(1024)
+# Read from the reader (blocks until data available)
+slice = Bytes.new(1024)
+bytes_read = reader.read(slice)
 
-# Cancel ongoing reads
-reader.cancel
+# Cancel ongoing reads (returns true if cancellation succeeded)
+cancelled = reader.cancel
+
+# After cancellation, subsequent reads raise CancelReader::CanceledError
+begin
+  reader.read(slice)
+rescue ex : CancelReader::CanceledError
+  puts "Read was canceled"
+end
 ```
+
+### Platform Support
+
+- **Linux**: Uses `epoll` for file descriptors.
+- **BSD (macOS, FreeBSD, etc.)**: Uses `kqueue`, except for `/dev/tty` which falls back to `select`.
+- **Other Unix**: Uses `select`.
+- **Windows**: Falls back to a non‑interruptible reader (cancellation only prevents future reads).
+- **FD_SETSIZE limit**: File descriptors ≥ 1024 cannot be used with `select`‑based implementations (BSD `/dev/tty` and other Unix); they automatically fall back to the non‑interruptible reader.
 
 See the original [Go documentation](https://pkg.go.dev/github.com/muesli/cancelreader) for detailed usage.
 
