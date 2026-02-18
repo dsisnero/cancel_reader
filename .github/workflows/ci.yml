@@ -9,6 +9,8 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-latest
+    env:
+      CANCEL_READER_DEBUG: 1
     steps:
       - uses: actions/checkout@v4
         with:
