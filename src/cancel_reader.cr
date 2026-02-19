@@ -181,6 +181,7 @@ module CancelReader
       end
 
       def read(slice : Bytes) : Int32
+        puts "DEBUG epoll read: canceled?=#{@mixin.canceled?}" if ENV["CANCEL_READER_DEBUG"]?
         if @mixin.canceled?
           raise ErrCanceled
         end
@@ -212,6 +213,7 @@ module CancelReader
 
       private def wait_for_readable
         event = ::LibC::EpollEvent.new
+        puts "DEBUG epoll wait_for_readable: canceled?=#{@mixin.canceled?}, file_fd=#{@file.fd}, cancel_fd=#{@cancel_signal_reader.fd}" if ENV["CANCEL_READER_DEBUG"]?
         loop do
           if @mixin.canceled?
             raise ErrCanceled

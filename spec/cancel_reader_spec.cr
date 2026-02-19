@@ -265,8 +265,8 @@ end
       writer.flush
 
       # Variables to capture read result
-      read_bytes = Channel(Int32).new
-      read_error = Channel(Exception?).new
+      read_bytes = Channel(Int32).new(1)
+      read_error = Channel(Exception?).new(1)
 
       # Spawn a fiber that will read
       done = Channel(Nil).new
